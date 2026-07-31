@@ -9,6 +9,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
+    networks:
       - storage-internal
       - traefik-public
     labels:
