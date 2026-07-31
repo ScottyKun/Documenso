@@ -1,0 +1,128 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+      - storage-internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio-console.rule=Host(`storage.famproject.cloud`)"
+      - "traefik.http.routers.minio-console.entrypoints=websecure"
+      - "traefik.http.routers.minio-console.tls.certresolver=leresolver"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9001"
+      - "traefik.docker.network=traefik-public"
+
+  # Cree automatiquement les buckets au demarrage (aucune console/CLI manuelle necessaire en prod).
+  # Tourne une fois, cree les buckets s'ils n'existent pas deja (idempotent), puis s'arrete.
+  createbuckets:
+    image: minio/mc:latest
+    container_name: minio_createbuckets
+    depends_on:
+      - minio
+    networks:
+      - storage-internal
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do
+        echo 'En attente de MinIO...'; sleep 2;
+      done;
+      mc mb --ignore-existing local/documenso-documents;
+      mc mb --ignore-existing local/dskt-documents;
+      echo 'Buckets prets.';
+      exit 0;
+      "
+
+  documenso-postgres:
+    image: postgres:16
+    container_name: documenso_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: documenso
+      POSTGRES_PASSWORD: ${DOCUMENSO_DB_PASSWORD}
+      POSTGRES_DB: documenso
+    volumes:
+      - documenso_pgdata:/var/lib/postgresql/data
+    networks:
+      - documenso-db-internal
+
+  documenso:
+    image: documenso/documenso:latest
+    container_name: documenso
+    restart: unless-stopped
+    environment:
+      NEXTAUTH_SECRET: ${DOCUMENSO_NEXTAUTH_SECRET}
+      NEXT_PRIVATE_ENCRYPTION_KEY: ${DOCUMENSO_ENCRYPTION_KEY}
+      NEXT_PRIVATE_ENCRYPTION_SECONDARY_KEY: ${DOCUMENSO_ENCRYPTION_SECONDARY_KEY}
+
+      NEXT_PUBLIC_WEBAPP_URL: https://sign.famproject.cloud
+      NEXT_PRIVATE_INTERNAL_WEBAPP_URL: http://documenso:3000
+
+      # Base de donnees dediee a Documenso (jamais partagee )
+      NEXT_PRIVATE_DATABASE_URL: postgres://documenso:${DOCUMENSO_DB_PASSWORD}@documenso-postgres:5432/documenso
+      NEXT_PRIVATE_DIRECT_DATABASE_URL: postgres://documenso:${DOCUMENSO_DB_PASSWORD}@documenso-postgres:5432/documenso
+
+      # Certificat de signature (genere une fois, monte en volume, jamais dans l'image)
+      NEXT_PRIVATE_SIGNING_LOCAL_FILE_PATH: /opt/documenso/cert.p12
+      NEXT_PRIVATE_SIGNING_PASSPHRASE: ${DOCUMENSO_SIGNING_PASSPHRASE}
+
+      # Mail
+      NEXT_PRIVATE_SMTP_TRANSPORT: smtp-auth
+      NEXT_PRIVATE_SMTP_HOST: in-v3.mailjet.com
+      NEXT_PRIVATE_SMTP_PORT: 587
+      NEXT_PRIVATE_SMTP_SECURE: "false"
+      NEXT_PRIVATE_SMTP_USERNAME: ${MAIL_USERNAME}
+      NEXT_PRIVATE_SMTP_PASSWORD: ${MAIL_PASSWORD}
+      NEXT_PRIVATE_SMTP_FROM_NAME: "DSKT Rental - Signature électronique"
+      NEXT_PRIVATE_SMTP_FROM_ADDRESS: ${MAIL_FROM_ADDRESS}
+
+      # Stockage des documents sur MinIO
+      NEXT_PUBLIC_UPLOAD_TRANSPORT: s3
+      NEXT_PRIVATE_UPLOAD_ENDPOINT: http://minio:9000
+      NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE: "true"
+      NEXT_PRIVATE_UPLOAD_REGION: us-east-1
+      NEXT_PRIVATE_UPLOAD_BUCKET: documenso-documents
+      NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+
+    volumes:
+      # Certificat P12 genere manuellement (voir README)
+      - ./documenso/cert.p12:/opt/documenso/cert.p12:ro
+    depends_on:
+      documenso-postgres:
+        condition: service_started
+      createbuckets:
+        condition: service_completed_successfully
+    # Decommente si tu veux un acces direct depuis le serveur (debug, tunnel SSH) :
+    # ports:
+    #   - 
+    networks:
+      - documenso-db-internal
+      - storage-internal
+      - traefik-public
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.documenso.rule=Host(`sign.famproject.cloud`)"
+      - "traefik.http.routers.documenso.entrypoints=websecure"
+      - "traefik.http.routers.documenso.tls.certresolver=leresolver"
+      - "traefik.http.services.documenso.loadbalancer.server.port=3000"
+      - "traefik.docker.network=traefik-public"
+
+volumes:
+  minio_data:
+  documenso_pgdata:
+
+networks:
+  # Prive a ce repo : uniquement documenso <-> sa base Postgres
+  documenso-db-internal:
+  storage-internal:
+    external: true
+  traefik-public:
+    external: true

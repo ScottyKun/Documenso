@@ -1,1 +1,6 @@
 .env
+.env.*
+!.env.example
+documenso/cert.p12
+documenso/cert.local.p12
+*.pem
