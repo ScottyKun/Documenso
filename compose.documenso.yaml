@@ -29,16 +29,10 @@ services:
     networks:
       - storage-internal
     restart: "no"
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}; do
-        echo 'En attente de MinIO...'; sleep 2;
-      done;
-      mc mb --ignore-existing local/documenso-documents;
-      mc mb --ignore-existing local/dskt-documents;
-      echo 'Buckets prets.';
-      exit 0;
-      "
+    entrypoint: ["/bin/sh", "-c", "until mc alias set local http://minio:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD; do echo 'En attente de MinIO...'; sleep 2; done; mc mb --ignore-existing local/documenso-documents; mc mb --ignore-existing local/dskt-documents; echo 'Buckets prets.'; exit 0;"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
 
   documenso-postgres:
     image: postgres:16
@@ -93,7 +87,7 @@ services:
       NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
 
     volumes:
-      # Certificat P12 genere manuellement (voir README)
+      # Certificat P12
       - ./documenso/cert.p12:/opt/documenso/cert.p12:ro
     depends_on:
       documenso-postgres:
