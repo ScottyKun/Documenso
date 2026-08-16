@@ -100,7 +100,7 @@ services:
     #   - 
     networks:
       - documenso-db-internal
-      - storage-internal
+      - documenso-public
       - traefik-public
     labels:
       - "traefik.enable=true"
@@ -119,5 +119,8 @@ networks:
   documenso-db-internal:
   storage-internal:
     external: true
+  documenso-public:
+    external: true
   traefik-public:
     external: true
+
